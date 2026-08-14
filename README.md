@@ -1,6 +1,6 @@
 # Protótipo (Godot 4)
 
-Jogo 3D competitivo para 2 jogadores (local ou split), em uma quadra fechada com 4 paredes. 
+Jogo 3D competitivo para 2 jogadores em uma quadra fechada com 4 paredes. 
 Duas máquinas inimigas ficam presas a uma das paredes, movendo-se lateralmente e disparando projéteis. 
 Os jogadores usam parry para ricochetear projéteis de volta nas máquinas, destruindo-as. 
 Quem destruir primeiro N máquinas vence.
