@@ -5,6 +5,14 @@ extends Node3D
 ## aleatoriamente. Ao ser atingida por um projétil RICOCHETEADO (de qualquer
 ## um dos players), é destruída, atribui ponto ao autor do parry e "nasce"
 ## de novo após um tempo aleatório (machine_respawn_time_min/max).
+##
+## REDE: o disparo (Timer + escolha de alvo + spawn do projétil) só roda no
+## host — senão cada cliente spawnaria seu próprio projétil "fantasma" e
+## duplicaria os tiros. O projétil em si é replicado automaticamente pelo
+## MultiplayerSpawner (ver scenes/main.tscn). destroy() é chamado via RPC
+## (o host decide, todos executam), então clientes nunca precisam decidir
+## isso por conta própria. O balanço/vaivém visual (_process) roda em todo
+## mundo, é só cosmético e não depende de rede.
 
 @export var projectile_scene: PackedScene
 @export var move_range_override: float = -1.0   # -1 = usa GameConfig.machine_move_range
@@ -20,11 +28,15 @@ var active: bool = true
 var _base_position: Vector3
 var _time_alive: float = 0.0
 
+func _is_authority() -> bool:
+	return not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+
 func _ready() -> void:
 	_base_position = position
-	_fire_timer.wait_time = GameConfig.machine_fire_rate
-	_fire_timer.timeout.connect(_on_fire_timer_timeout)
-	_fire_timer.start()
+	if _is_authority():
+		_fire_timer.wait_time = GameConfig.machine_fire_rate
+		_fire_timer.timeout.connect(_on_fire_timer_timeout)
+		_fire_timer.start()
 
 func _process(delta: float) -> void:
 	if not active:
@@ -55,15 +67,25 @@ func _fire_at_random_player() -> void:
 
 	var target: Node3D = players[randi() % players.size()]
 	var projectile := projectile_scene.instantiate()
+	# Adiciona sob current_scene (Main): é o spawn_path configurado no
+	# MultiplayerSpawner, então essa instanciação é automaticamente
+	# replicada para todos os clientes quando rodando em rede.
 	get_tree().current_scene.add_child(projectile)
 
 	var spawn_pos: Vector3 = _hitbox.global_position
 	var direction: Vector3 = target.global_position - spawn_pos
-	projectile.launch(spawn_pos, direction)
+	if multiplayer.has_multiplayer_peer():
+		projectile.rpc("launch", spawn_pos, direction)
+	else:
+		projectile.launch(spawn_pos, direction)
 
-## Chamado pelo Projectile quando um projétil ricocheteado a acerta.
-## by_player_id: id do player autor do parry que originou este projétil.
+## Chamado (via RPC quando em rede) pelo Projectile quando um projétil
+## ricocheteado a acerta. by_player_id: id do player autor do parry que
+## originou este projétil.
+@rpc("any_peer", "call_local", "reliable")
 func destroy(by_player_id: int) -> void:
+	if multiplayer.has_multiplayer_peer() and multiplayer.get_remote_sender_id() not in [0, 1]:
+		return  # só o host (peer 1) pode autorizar a destruição.
 	if not active:
 		return
 	active = false
@@ -74,16 +96,24 @@ func destroy(by_player_id: int) -> void:
 	if by_player_id > 0:
 		MatchManager.add_score(by_player_id)
 
-	var respawn_time: float = randf_range(
-		GameConfig.machine_respawn_time_min,
-		GameConfig.machine_respawn_time_max
-	)
-	var timer := get_tree().create_timer(respawn_time)
-	timer.timeout.connect(_respawn)
+	if _is_authority():
+		var respawn_time: float = randf_range(
+			GameConfig.machine_respawn_time_min,
+			GameConfig.machine_respawn_time_max
+		)
+		var timer := get_tree().create_timer(respawn_time)
+		timer.timeout.connect(_respawn)
 
 func _respawn() -> void:
 	if not is_instance_valid(self):
 		return
+	if multiplayer.has_multiplayer_peer():
+		_rpc_respawn.rpc()
+	else:
+		_rpc_respawn()
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_respawn() -> void:
 	active = true
 	_mesh.visible = true
 	_hitbox.set_deferred("monitorable", true)

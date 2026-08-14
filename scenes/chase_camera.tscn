@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://chase_camera_scene"]
+
+[ext_resource type="Script" path="res://scripts/chase_camera.gd" id="1"]
+
+[node name="ChaseCamera" type="Camera3D"]
+current = true
+fov = 75.0
+script = ExtResource("1")
